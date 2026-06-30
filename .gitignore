@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Model weights (auto-downloaded by ultralytics on first run)
+*.pt
+
+# Editor / tooling / OS
+.claude/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local secrets / environment
+.env
+*.local
+
+# stray ultralytics sample image downloaded during testing
+bus.jpg
