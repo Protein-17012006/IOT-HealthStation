@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smart Patient Monitoring Station</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root{ --bg:#0f172a; --card:#1e293b; --muted:#94a3b8; --ok:#22c55e;
+         --warn:#f59e0b; --crit:#ef4444; --acc:#38bdf8; }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:#e2e8f0}
+  header{padding:16px 24px;background:#020617;display:flex;justify-content:space-between;align-items:center}
+  header h1{font-size:18px;margin:0}
+  .pill{padding:4px 12px;border-radius:999px;font-size:13px;font-weight:600}
+  .wrap{max-width:1100px;margin:0 auto;padding:20px}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px}
+  .card{background:var(--card);border-radius:14px;padding:18px}
+  .card h2{margin:0 0 6px;font-size:13px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+  .big{font-size:34px;font-weight:700}
+  .unit{font-size:15px;color:var(--muted)}
+  .section{margin-top:24px}
+  .row{display:flex;gap:16px;flex-wrap:wrap}
+  .row > *{flex:1;min-width:300px}
+  label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+  input,select,button{font:inherit;padding:8px 10px;border-radius:8px;border:1px solid #334155;background:#0b1220;color:#e2e8f0}
+  button{cursor:pointer;border:none;background:var(--acc);color:#04293a;font-weight:600}
+  button.ghost{background:#334155;color:#e2e8f0}
+  .controls{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  td,th{text-align:left;padding:6px 8px;border-bottom:1px solid #334155}
+  .sev-critical{color:var(--crit);font-weight:700}
+  .sev-warning{color:var(--warn)}
+  .sev-info{color:var(--muted)}
+  .statline{display:flex;gap:18px;margin-top:8px;font-size:14px}
+  .alert-banner{background:var(--crit);color:#fff;padding:14px 24px;font-weight:700;text-align:center;display:none}
+</style>
+</head>
+<body>
+<header>
+  <h1>🏥 Smart Patient / Elderly Monitoring Station</h1>
+  <span id="aiPill" class="pill" style="background:#334155">AI: …</span>
+</header>
+<div id="fallBanner" class="alert-banner">⚠️ FALL DETECTED — caregiver attention needed</div>
+
+<div class="wrap">
+  <!-- live cards -->
+  <div class="grid">
+    <div class="card"><h2>Temperature</h2><div><span id="temp" class="big">--</span><span class="unit"> °C</span></div></div>
+    <div class="card"><h2>Humidity</h2><div><span id="hum" class="big">--</span><span class="unit"> %</span></div></div>
+    <div class="card"><h2>Sound level</h2><div><span id="sound" class="big">--</span><span class="unit"> /4095</span></div></div>
+    <div class="card"><h2>Current patient</h2><div id="patient" class="big" style="font-size:22px">—</div><div id="ts" class="unit"></div></div>
+  </div>
+
+  <div class="row section">
+    <!-- chart + stats -->
+    <div class="card">
+      <div class="controls">
+        <div><label>Metric</label>
+          <select id="metric"><option value="temp">Temperature</option><option value="humidity">Humidity</option><option value="sound">Sound</option></select>
+        </div>
+        <button class="ghost" onclick="refreshChart()">Refresh</button>
+      </div>
+      <canvas id="chart" height="120"></canvas>
+      <div class="statline">
+        <span>Mean: <b id="st_mean">--</b></span>
+        <span>Min: <b id="st_min">--</b></span>
+        <span>Max: <b id="st_max">--</b></span>
+        <span>Samples: <b id="st_count">--</b></span>
+      </div>
+    </div>
+
+    <!-- events -->
+    <div class="card">
+      <h2>Recent events</h2>
+      <table><tbody id="events"></tbody></table>
+    </div>
+  </div>
+
+  <div class="row section">
+    <!-- rule settings -->
+    <div class="card">
+      <h2>Rule thresholds (edge analytics)</h2>
+      <label>Fever temperature ≥ (°C)</label><input id="set_temp_high" type="number" step="0.1">
+      <label>Loud sound ≥ (raw 0–4095)</label><input id="set_sound_high" type="number">
+      <label><input id="set_fan_auto" type="checkbox"> Auto fan on fever</label>
+      <label><input id="set_rules_enabled" type="checkbox"> Rules enabled</label>
+      <label><input id="set_fall_detection" type="checkbox"> Fall detection (AI)</label>
+      <br><button onclick="saveSettings()">Save settings</button>
+      <span id="savedMsg" class="unit"></span>
+    </div>
+
+    <!-- manual control -->
+    <div class="card">
+      <h2>Manual actuator control</h2>
+      <div class="controls">
+        <button onclick="cmd({fan:1})">Fan ON</button>
+        <button class="ghost" onclick="cmd({fan:0})">Fan OFF</button>
+        <button onclick="cmd({led:'red'})">LED red</button>
+        <button onclick="cmd({led:'green'})">LED green</button>
+      </div>
+      <label>LCD message</label>
+      <div class="controls">
+        <input id="lcdMsg" placeholder="Type up to 32 chars" style="flex:1">
+        <button onclick="cmd({lcd:document.getElementById('lcdMsg').value})">Send</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let chart;
+let settingsLoaded = false;   // populate the settings form once, then leave it
+                              // alone so the 2s poll can't overwrite edits in progress
+
+function initChart(){
+  chart = new Chart($('chart'), {
+    type:'line',
+    data:{labels:[],datasets:[{label:'value',data:[],borderColor:'#38bdf8',
+          backgroundColor:'rgba(56,189,248,.15)',fill:true,tension:.3,pointRadius:0}]},
+    options:{plugins:{legend:{display:false}},scales:{
+        x:{ticks:{color:'#94a3b8',maxTicksLimit:6}},y:{ticks:{color:'#94a3b8'}}}}
+  });
+}
+
+async function refreshLatest(){
+  const d = await (await fetch('/api/latest')).json();
+  const r = d.reading || {};
+  $('temp').textContent  = r.temp!=null ? Number(r.temp).toFixed(1) : '--';
+  $('hum').textContent   = r.humidity!=null ? Number(r.humidity).toFixed(1) : '--';
+  $('sound').textContent = r.sound!=null ? r.sound : '--';
+  $('patient').textContent = d.patient || '—';
+  $('ts').textContent = r.ts ? ('updated '+r.ts) : '';
+
+  // settings -> form: do this ONCE on first load only. The recurring 2s poll must
+  // not rewrite these inputs, otherwise a value you are typing (e.g. 9 -> 20) gets
+  // snapped back to the stored value before you can press Save.
+  if (!settingsLoaded && d.settings && Object.keys(d.settings).length) {
+    applySettings(d.settings);
+    settingsLoaded = true;
+  }
+
+  // events
+  $('events').innerHTML = (d.events||[]).map(e =>
+    `<tr><td class="unit">${e.ts.split(' ')[1]||e.ts}</td>
+         <td class="sev-${e.severity}">${e.type}</td>
+         <td>${e.message}</td></tr>`).join('');
+
+  // fall banner: show only if a fall happened within the last 30s, so it auto-
+  // clears once the person is up again -- instead of latching on old fall rows
+  // that linger in the recent-events list with no newer events to push them out.
+  const age = d.last_fall_age;
+  const fall = (age != null && age <= 30);
+  $('fallBanner').style.display = fall ? 'block' : 'none';
+  $('aiPill').textContent = fall ? 'AI: FALL!' : 'AI: monitoring';
+  $('aiPill').style.background = fall ? '#ef4444' : '#22c55e';
+}
+
+async function refreshChart(){
+  const m = $('metric').value;
+  const data = await (await fetch('/api/history?metric='+m+'&n=60')).json();
+  chart.data.labels = data.map(p=>p.ts);
+  chart.data.datasets[0].data = data.map(p=>p.value);
+  chart.update();
+  const st = await (await fetch('/api/stats?metric='+m+'&minutes=60')).json();
+  $('st_mean').textContent  = st.mean  ?? '--';
+  $('st_min').textContent   = st.min   ?? '--';
+  $('st_max').textContent   = st.max   ?? '--';
+  $('st_count').textContent = st.count ?? '--';
+}
+
+function applySettings(s){
+  s = s || {};
+  $('set_temp_high').value  = s.temp_high  ?? '';
+  $('set_sound_high').value = s.sound_high ?? '';
+  $('set_fan_auto').checked       = s.fan_auto==='1';
+  $('set_rules_enabled').checked  = s.rules_enabled==='1';
+  $('set_fall_detection').checked = s.fall_detection==='1';
+}
+
+async function saveSettings(){
+  const body = {
+    temp_high: $('set_temp_high').value,
+    sound_high: $('set_sound_high').value,
+    fan_auto: $('set_fan_auto').checked ? '1':'0',
+    rules_enabled: $('set_rules_enabled').checked ? '1':'0',
+    fall_detection: $('set_fall_detection').checked ? '1':'0',
+  };
+  await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+  $('savedMsg').textContent = '✓ saved';
+  setTimeout(()=>$('savedMsg').textContent='',1500);
+}
+
+async function cmd(c){
+  await fetch('/api/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(c)});
+}
+
+initChart();
+refreshLatest(); refreshChart();
+setInterval(refreshLatest, 2000);
+setInterval(refreshChart, 5000);
+$('metric').addEventListener('change', refreshChart);
+</script>
+</body>
+</html>
