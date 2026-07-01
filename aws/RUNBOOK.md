@@ -84,6 +84,12 @@ aws secretsmanager get-secret-value --region ap-southeast-1 \
   --secret-id <IngestSecretArn> --query SecretString --output text   # {"token"}
 ```
 
+### Fall-alert email (SNS)
+On the first deploy, AWS SNS sends a **"Subscription Confirmation"** email to the
+`AlertEmail` address (default `huyhoang17012006@gmail.com`). You MUST click
+**Confirm subscription** once — until then no fall alerts are delivered. Change
+the recipient with `ALERT_EMAIL=<addr> bash aws/deploy.sh`.
+
 ### Step 2 — Start the edge server on Windows (ESP32 → cloud over HTTP)
 The DB is private, so main.py PUSHES readings to the cloud via HTTP (no direct
 DB connection). PowerShell, from the repo root:

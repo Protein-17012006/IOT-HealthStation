@@ -229,5 +229,8 @@ options: **pause** (scale ECS to 0 + stop RDS — keeps the stack, data and URLs
   ACM certificate).
 - **Least privilege.** The ECS task role can read only its three specific
   Secrets Manager secrets; security groups allow only ALB→ECS→RDS hops.
+- **Fall-alert email.** On a fall, the dashboard publishes to an SNS topic that
+  emails the caregiver address (`AlertEmail`). Confirm the SNS subscription email
+  once after the first deploy.
 
 > **Cost note.** Left fully running this is ~US$1–2/day (ALB + RDS + Fargate).

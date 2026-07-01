@@ -22,6 +22,10 @@ Parameters:
   DbInstanceClass:
     Type: String
     Default: db.t4g.micro
+  AlertEmail:
+    Type: String
+    Default: huyhoang17012006@gmail.com
+    Description: Email address that receives fall alerts (SNS subscription).
 
 Resources:
 
@@ -181,6 +185,20 @@ Resources:
         PasswordLength: 40
         ExcludePunctuation: true
 
+  # ---- Fall-alert email (SNS) ----------------------------------------------
+  FallAlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: health-station-fall-alerts
+      DisplayName: Health Station Fall Alert
+
+  FallAlertSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref FallAlertTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
   # ---- ECS ------------------------------------------------------------------
   LogGroup:
     Type: AWS::Logs::LogGroup
@@ -217,6 +235,25 @@ Resources:
                 Action: kms:Decrypt
                 Resource: "*"   # RDS-managed secret uses the aws/secretsmanager key
 
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: health-station-ecs-task
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: publish-fall-alerts
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: sns:Publish
+                Resource: !Ref FallAlertTopic
+
   Cluster:
     Type: AWS::ECS::Cluster
     Properties:
@@ -231,6 +268,7 @@ Resources:
       Cpu: "256"
       Memory: "512"
       ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      TaskRoleArn: !GetAtt TaskRole.Arn
       ContainerDefinitions:
         - Name: web
           Image: !Ref ImageUri
@@ -244,6 +282,9 @@ Resources:
             - { Name: WEB_HOST, Value: "0.0.0.0" }
             - { Name: WEB_PORT, Value: !Ref ContainerPort }
             - { Name: DASH_USER, Value: "admin" }
+            - { Name: FALL_ALERT_TOPIC_ARN, Value: !Ref FallAlertTopic }
+            - { Name: FALL_ALERT_COOLDOWN, Value: "300" }
+            - { Name: PUBLIC_URL, Value: !Sub "http://${LoadBalancer.DNSName}" }
           Secrets:
             - Name: DB_USER
               ValueFrom: !Sub "${Database.MasterUserSecret.SecretArn}:username::"
@@ -382,3 +423,6 @@ Outputs:
   IngestSecretArn:
     Description: Secrets Manager ARN with the device ingest {token}.
     Value: !Ref IngestTokenSecret
+  FallAlertTopicArn:
+    Description: SNS topic that emails fall alerts (confirm the email subscription!).
+    Value: !Ref FallAlertTopic

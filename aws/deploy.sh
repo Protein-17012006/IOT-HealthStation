@@ -53,7 +53,7 @@ aws cloudformation deploy \
   --stack-name "$MAIN_STACK" \
   --template-file aws/cloudformation/main.yaml \
   --capabilities CAPABILITY_NAMED_IAM \
-  --parameter-overrides ImageUri="$IMAGE_URI"
+  --parameter-overrides ImageUri="$IMAGE_URI" AlertEmail="${ALERT_EMAIL:-huyhoang17012006@gmail.com}"
 
 echo "==> [4/4] Outputs"
 aws cloudformation describe-stacks --region "$REGION" \
