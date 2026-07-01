@@ -40,3 +40,11 @@ LOCAL_AI = _env("LOCAL_AI", "0") == "1"
 # ---- Web UI -----------------------------------------------------------------
 WEB_HOST = _env("WEB_HOST", "0.0.0.0")
 WEB_PORT = int(_env("WEB_PORT", "5000"))
+
+# ---- Cloud mode -------------------------------------------------------------
+# When the database lives on AWS (RDS, kept PRIVATE), the edge server can't open
+# a MySQL connection to it. Set CLOUD_URL to the dashboard's base URL and main.py
+# will PUSH each reading over HTTP to POST /api/ingest (authenticated with
+# INGEST_TOKEN) instead of writing to a local DB. Empty = normal local DB mode.
+CLOUD_URL = _env("CLOUD_URL", "").rstrip("/")
+INGEST_TOKEN = _env("INGEST_TOKEN", "")

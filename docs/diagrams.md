@@ -268,3 +268,56 @@ erDiagram
     int consumed
   }
 ```
+
+---
+
+## 7. Cloud deployment — AWS (hybrid edge + cloud)
+> How the same code runs on AWS. The **database** (→ RDS MySQL) and the **Flask
+> dashboard** (→ ECS Fargate behind an ALB, fronted by API Gateway) move to the
+> cloud, provisioned by **CloudFormation**. The parts that need physical
+> hardware — the **ESP32 serial reader** (`main.py`) and the **GPU YOLO
+> detector** — stay on the local machine and connect to the cloud over the
+> internet. See `aws/` and the README "Cloud deployment (AWS)" section.
+
+```mermaid
+flowchart LR
+  subgraph LOCAL["LOCAL (at home) — needs the physical hardware"]
+    direction TB
+    ESP["ESP32 + sensors<br/>(USB serial)"]
+    MAIN["main.py<br/>serial reader + rules"]
+    YOLO["fall_detector_yolo.py<br/>YOLOv8-pose @ GPU"]
+    PHONE["iPhone<br/>IP Camera Lite"]
+    ESP <-->|USB serial JSON| MAIN
+    PHONE -->|RTSP/MJPEG| YOLO
+  end
+
+  subgraph AWS["AWS (ap-southeast-1) — created by CloudFormation"]
+    direction TB
+    APIGW["API Gateway<br/>(HTTP API)"]
+    ALB["Application<br/>Load Balancer :80"]
+    subgraph ECS["ECS Fargate"]
+      WEB["webapp/app.py<br/>Flask + gunicorn :8080<br/>(serves React SPA)"]
+    end
+    RDS[("RDS MySQL<br/>health_station<br/>PRIVATE (VPC-only)")]
+    SEC["Secrets Manager<br/>(DB + app creds)"]
+    ECR["ECR<br/>(dashboard image)"]
+    APIGW -->|HTTP_PROXY| ALB
+    ALB --> WEB
+    WEB --> RDS
+    WEB -. reads creds .-> SEC
+    ECS -. pulls image .-> ECR
+  end
+
+  USER["Caregiver<br/>(browser)"]
+
+  MAIN -->|"POST /api/ingest (token, HTTP)"| ALB
+  YOLO -->|"POST /api/fall + /api/ai_frame (token)"| ALB
+  USER -->|"ALB URL = full features (SSE + video)"| ALB
+  USER -->|"API Gateway URL = managed API"| APIGW
+```
+
+> **Streaming note.** API Gateway buffers responses and times out long-lived
+> connections, so Server-Sent Events (`/api/stream`) and the MJPEG video feeds
+> (`/api/ai_camera`, `/api/camera`) do **not** stream through the API Gateway
+> URL — the dashboard automatically falls back to 2 s polling there. Open the
+> **ALB URL** for the full live-video experience.
