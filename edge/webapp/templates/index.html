@@ -41,8 +41,6 @@ body{
 .brand .glyph{width:30px;height:30px;border-radius:8px;display:grid;place-items:center;
   background:linear-gradient(140deg,#1b2a3f,#0e1622);border:1px solid var(--line2);color:var(--ok);font-size:15px}
 .topbar .sep{width:1px;height:26px;background:var(--line)}
-.patient-id{display:flex;flex-direction:column;line-height:1.25}
-.patient-id .who{font-weight:600;font-size:14px}
 .topbar .spacer{flex:1}
 .status-pill{font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:13px;letter-spacing:.08em;
   padding:7px 14px;border-radius:999px;border:1px solid;white-space:nowrap;transition:.3s}
@@ -101,9 +99,6 @@ body{
 .spark{width:100%;height:28px;margin-top:2px}
 .spark-line{fill:none;stroke-width:1.6;opacity:.85}
 .vital.alert{border-color:rgba(255,59,71,.5);box-shadow:0 0 0 1px rgba(255,59,71,.4),0 0 26px rgba(255,59,71,.18)}
-.patientcard{align-items:flex-start;justify-content:center;gap:4px}
-.patientcard .who{font-family:'Space Grotesk',sans-serif;font-size:21px;font-weight:600;margin-top:6px}
-.patientcard .meta{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--muted)}
 
 /* ---------- rows ---------- */
 .row{display:grid;grid-template-columns:1.4fr 1fr;gap:16px;margin-bottom:16px}
@@ -161,10 +156,6 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 <header class="topbar">
   <div class="brand"><span class="glyph">✚</span> Health Station</div>
   <div class="sep"></div>
-  <div class="patient-id">
-    <span class="eyebrow">Patient</span>
-    <span class="who" id="patientTop">—</span>
-  </div>
   <div class="spacer"></div>
   <div class="conn" id="conn"><span class="dot"></span><span id="connTxt">connecting…</span></div>
   <button class="iconbtn" id="muteBtn" title="Mute / unmute fall alarm">🔔</button>
@@ -222,12 +213,6 @@ table{width:100%;border-collapse:collapse;font-size:13px}
         <circle class="ring-val" cx="60" cy="60" r="52"></circle></svg>
         <div class="read"><span class="num" id="val-sound">--</span><span class="unit">/4095</span></div></div>
       <svg class="spark" viewBox="0 0 100 28" preserveAspectRatio="none"><polyline class="spark-line" points=""></polyline></svg>
-    </div>
-    <div class="card vital patientcard">
-      <span class="eyebrow">Current patient</span>
-      <div class="who" id="patient">—</div>
-      <div class="meta" id="updated">awaiting data…</div>
-      <div class="meta muted" style="margin-top:auto">RFID check-in</div>
     </div>
   </section>
 
@@ -416,9 +401,6 @@ function update(d){
   renderVital('temp', r.temp, s);
   renderVital('humidity', r.humidity, s);
   renderVital('sound', r.sound, s);
-  $('patient').textContent = d.patient || '—';
-  $('patientTop').textContent = d.patient || '—';
-  $('updated').textContent = r.ts ? ('updated ' + r.ts.split(' ')[1]) : 'awaiting data…';
   if (r.sound != null) pushWave(Number(r.sound), s);
 
   $('events').innerHTML = (d.events || []).map(e =>

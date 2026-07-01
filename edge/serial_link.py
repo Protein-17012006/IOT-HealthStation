@@ -55,7 +55,6 @@ class SerialLink:
     # -- simulator -----------------------------------------------------------
     def _sim_loop(self):
         t0 = time.time()
-        cards = ["A1B2C3D4", "11223344", None, None, None]
         while self._running:
             el = time.time() - t0
             temp = 36.6 + 1.6 * math.sin(el / 25) + random.uniform(-0.2, 0.2)
@@ -63,10 +62,6 @@ class SerialLink:
             sound = int(380 + 260 * abs(math.sin(el / 9)) + random.uniform(0, 90))
             msg = {"type": "reading", "temp": round(temp, 1),
                    "hum": round(hum, 1), "sound": sound}
-            if random.random() < 0.04:
-                uid = random.choice(cards)
-                if uid:
-                    msg["rfid"] = uid
             self.rx.put(msg)
             time.sleep(1)
 

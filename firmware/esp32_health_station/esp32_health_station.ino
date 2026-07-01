@@ -7,7 +7,6 @@
  *  SENSORS
  *    - DHT11/DHT22  : temperature + humidity        (DIGITAL sensor)
  *    - KY-037       : ambient sound level (AO pin)  (ANALOG  sensor)
- *    - RC522 RFID   : patient ID card               (SPI / digital input)
  *
  *  ACTUATORS
  *    - LED red / green : status & alert indicator
@@ -15,17 +14,15 @@
  *    - I2C 16x2 LCD    : on-station information display
  *
  *  COMMUNICATION (Task#2): USB Serial, 115200 baud, newline-delimited JSON.
- *    ESP32 -> Jetson : {"type":"reading","temp":36.8,"hum":55.2,"sound":512,"rfid":"A1B2C3D4"}
+ *    ESP32 -> Jetson : {"type":"reading","temp":36.8,"hum":55.2,"sound":512}
  *    Jetson -> ESP32 : {"fan":1,"led":"red","lcd":"FEVER 37.8C"}
  *
  *  Required libraries (Arduino IDE -> Library Manager):
- *    DHT sensor library (Adafruit), LiquidCrystal_I2C, MFRC522, ArduinoJson
+ *    DHT sensor library (Adafruit), LiquidCrystal_I2C, ArduinoJson
  * ============================================================================
  */
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
-#include <SPI.h>
-#include <MFRC522.h>
 #include <DHT.h>
 #include <ArduinoJson.h>
 
@@ -36,10 +33,7 @@
 #define LED_RED     12
 #define LED_GREEN   14
 #define FAN_PIN     13          // -> MOSFET gate (IRLZ44N) or relay module IN
-#define RFID_SS     5
-#define RFID_RST    27
 // I2C LCD uses SDA=21, SCL=22 (ESP32 defaults)
-// SPI for RC522 uses SCK=18, MISO=19, MOSI=23
 
 // Relay polarity: most cheap 1-channel relay modules are ACTIVE-LOW
 // (drive the IN/S pin LOW to switch the fan ON). Flip these two if you ever
@@ -49,25 +43,9 @@
 
 DHT dht(DHT_PIN, DHT_TYPE);
 LiquidCrystal_I2C lcd(0x27, 16, 2);     // try 0x3F if 0x27 shows nothing
-MFRC522 rfid(RFID_SS, RFID_RST);
 
 const unsigned long SEND_INTERVAL = 1000;   // ms between readings
 unsigned long lastSend = 0;
-String pendingUID = "";
-bool rfidPresent = false;
-
-// ----------------------------- RFID -----------------------------------------
-String readRFID() {
-  if (!rfid.PICC_IsNewCardPresent() || !rfid.PICC_ReadCardSerial()) return "";
-  String uid = "";
-  for (byte i = 0; i < rfid.uid.size; i++) {
-    if (rfid.uid.uidByte[i] < 0x10) uid += "0";
-    uid += String(rfid.uid.uidByte[i], HEX);
-  }
-  uid.toUpperCase();
-  rfid.PICC_HaltA();
-  return uid;
-}
 
 // ------------------------ Apply command from edge ---------------------------
 void applyCommand(JsonDocument &cmd) {
@@ -114,21 +92,11 @@ void setup() {
   lcd.backlight();
   lcd.setCursor(0, 0); lcd.print("Health Station");
   lcd.setCursor(0, 1); lcd.print("Booting...");
-
-  SPI.begin(18, 19, 23, RFID_SS);
-  rfid.PCD_Init();
-  byte ver = rfid.PCD_ReadRegister(MFRC522::VersionReg);
-  rfidPresent = (ver != 0x00 && ver != 0xFF);   // skip phantom reads if RC522 not wired yet
 }
 
 // -------------------------------- Loop --------------------------------------
 void loop() {
   readCommands();
-
-  if (rfidPresent) {
-    String uid = readRFID();
-    if (uid != "") pendingUID = uid;
-  }
 
   if (millis() - lastSend >= SEND_INTERVAL) {
     lastSend = millis();
@@ -144,10 +112,8 @@ void loop() {
     doc["temp"]  = t;
     doc["hum"]   = h;
     doc["sound"] = sound;
-    if (pendingUID != "") doc["rfid"] = pendingUID;
 
     serializeJson(doc, Serial);
     Serial.println();
-    pendingUID = "";                       // report each card scan only once
   }
 }

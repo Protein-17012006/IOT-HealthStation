@@ -110,13 +110,8 @@ def _ai_active():
 def _latest_payload():
     """The full live snapshot shared by /api/latest and the SSE stream."""
     r = db.latest_reading()
-    patient = None
-    if r and r.get("patient_uid"):
-        p = db.get_patient(r["patient_uid"])
-        patient = p["name"] if p else "Unknown"
     return {
         "reading": r,
-        "patient": patient,
         "events": db.recent_events(8),
         "settings": db.get_settings(),
         # seconds since the last fall (None if never) -> lets the banner auto-clear
@@ -286,21 +281,16 @@ def api_ingest():
     This is what lets the database stay PRIVATE: the edge box (behind CGNAT, no
     fixed IP) never opens a MySQL connection to RDS -- it POSTs the reading here
     with the shared X-Ingest-Token, and the app (already inside the VPC) does the
-    DB writes. Mirrors main.py._handle_reading: stores the reading, logs the RFID
-    check-in + rule events, applies a fall override, and returns the actuator
-    command (merged with any manual commands the UI queued) for the ESP32.
+    DB writes. Mirrors main.py._handle_reading: stores the reading, logs rule
+    events, applies a fall override, and returns the actuator command (merged with
+    any manual commands the UI queued) for the ESP32.
     """
     data = request.get_json(force=True) or {}
     temp = data.get("temp")
     hum = data.get("hum", data.get("humidity"))
     sound = data.get("sound")
-    uid = data.get("rfid") or data.get("uid")
 
-    db.insert_reading(temp, hum, sound, uid)
-    if uid:
-        p = db.get_patient(uid)
-        name = p["name"] if p else "Unknown card"
-        db.insert_event("rfid", "info", f"Patient check-in: {name} ({uid})")
+    db.insert_reading(temp, hum, sound)
 
     settings = db.get_settings()
     cmd, events = rules.evaluate({"temp": temp, "sound": sound}, settings)

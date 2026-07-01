@@ -5,7 +5,6 @@ import TopBar from './components/TopBar'
 import CameraPanel from './components/CameraPanel'
 import SoundWave from './components/SoundWave'
 import VitalGauge from './components/VitalGauge'
-import PatientCard from './components/PatientCard'
 import TrendChart from './components/TrendChart'
 import EventLog from './components/EventLog'
 import SettingsPanel from './components/SettingsPanel'
@@ -79,7 +78,7 @@ export default function App() {
           <div className="banner">⚠️ FALL DETECTED — caregiver attention needed</div>
         </div>
       )}
-      <TopBar patient={data?.patient || ''} live={live} status={status}
+      <TopBar live={live} status={status}
         muted={muted} onToggleMute={() => setMuted((m) => !m)} />
       <div className="wrap">
         <section className="core-hero">
@@ -89,8 +88,6 @@ export default function App() {
             </Suspense>
           </ErrorBoundary>
           <div className="core-overlay">
-            <span className="eyebrow">Patient status</span>
-            <div className="core-name">{data?.patient || '—'}</div>
             <span className="status-pill" style={{ color: status.col }}>● {status.txt}</span>
           </div>
         </section>
@@ -103,7 +100,6 @@ export default function App() {
           <VitalGauge label="Temperature" value={r.temp} unit="°C" color="var(--temp)" min={30} max={42} dec={1} alert={fever} />
           <VitalGauge label="Humidity" value={r.humidity} unit="%" color="var(--humid)" min={0} max={100} dec={0} alert={false} />
           <VitalGauge label="Sound level" value={r.sound} unit="/4095" color="var(--sound)" min={0} max={4095} dec={0} alert={loud} />
-          <PatientCard patient={data?.patient || ''} ts={r.ts} />
         </section>
 
         <section className="row">

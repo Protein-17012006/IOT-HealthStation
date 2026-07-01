@@ -20,7 +20,7 @@ from serial_link import SerialLink
 
 
 def main():
-    print("== Smart Patient/Elderly Monitoring Station -- edge server ==")
+    print("== Smart Elderly Monitoring Station -- edge server ==")
     cloud = bool(config.CLOUD_URL)
     if cloud:
         # DB lives on AWS (private) -> push readings over HTTP, don't touch it.
@@ -69,7 +69,7 @@ def _handle_reading_cloud(msg, link):
     returns to the ESP32. The server does the DB writes + rules + fall override,
     so RDS never has to be reachable from here (see webapp api_ingest)."""
     payload = {"temp": msg.get("temp"), "hum": msg.get("hum"),
-               "sound": msg.get("sound"), "rfid": msg.get("rfid")}
+               "sound": msg.get("sound")}
     req = urllib.request.Request(
         f"{config.CLOUD_URL}/api/ingest",
         data=json.dumps(payload).encode(),
@@ -84,8 +84,7 @@ def _handle_reading_cloud(msg, link):
         return
 
     print(f"[reading->cloud] temp={payload['temp']} hum={payload['hum']} "
-          f"sound={payload['sound']}"
-          + (f" rfid={payload['rfid']}" if payload["rfid"] else ""))
+          f"sound={payload['sound']}")
     cmd = resp.get("command") or {}
     if cmd:
         link.send_command(cmd)
@@ -101,16 +100,9 @@ def _handle_reading(msg, link, detector):
     temp = msg.get("temp")
     hum = msg.get("hum")
     sound = msg.get("sound")
-    uid = msg.get("rfid")
 
-    db.insert_reading(temp, hum, sound, uid)
-    print(f"[reading] temp={temp} hum={hum} sound={sound}"
-          + (f" rfid={uid}" if uid else ""))
-
-    if uid:
-        patient = db.get_patient(uid)
-        name = patient["name"] if patient else "Unknown card"
-        db.insert_event("rfid", "info", f"Patient check-in: {name} ({uid})")
+    db.insert_reading(temp, hum, sound)
+    print(f"[reading] temp={temp} hum={hum} sound={sound}")
 
     settings = db.get_settings()
     cmd, events = evaluate({"temp": temp, "sound": sound}, settings)
