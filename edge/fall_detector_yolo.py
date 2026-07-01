@@ -24,6 +24,12 @@ Fall heuristic (COCO-17 keypoints from YOLOv8-pose):
   bounding-box width test. A candidate fall must also persist for FALL_SECONDS
   before it is confirmed.
 
+  On top of this single-frame posture check, a MotionTracker adds a TEMPORAL
+  cue: it watches the person's vertical position + box height over ~1 s and flags
+  a fast downward drop that ends in a low/collapsed posture. This catches falls
+  toward/away from the camera (where the box stays tall and posture alone misses
+  them) while a slow sit-down is ignored. See MotionTracker + combine_fall.
+
   IMPORTANT: the heuristic assumes the camera's "up" is gravity. Phone IP-cam
   apps often deliver a rotated frame -- set ROTATE so you appear upright on the
   preview, otherwise a seated person reads as "lying down".
@@ -37,7 +43,7 @@ Run (inside the WSL venv):
 Env vars:
   CAMERA_SOURCE        rtsp URL | http MJPEG | path/to/video.mp4 | 0 (webcam)
   DASHBOARD_URL        base URL of the Flask dashboard      default http://localhost:5000
-  YOLO_MODEL           pose weights (auto-downloads)        default yolov8n-pose.pt
+  YOLO_MODEL           pose weights (auto-downloads)        default yolov8s-pose.pt
   ROTATE               rotate frames 0/90/180/270 deg       default 0
   SHOW_WINDOW          1 = also open a local preview window default 0
   STREAM_TO_DASHBOARD  1 = push annotated frames to the web default 1
@@ -79,7 +85,12 @@ def _ingest_headers(extra=None):
 if CAMERA_SOURCE.startswith("rtsp"):
     os.environ.setdefault("OPENCV_FFMPEG_CAPTURE_OPTIONS", "rtsp_transport;tcp")
 
-YOLO_MODEL = os.environ.get("YOLO_MODEL", "yolov8n-pose.pt")
+# Default to the "small" pose model: on an RTX 4060 it runs real-time and its
+# keypoints are trusted far more often than the tiny "nano" model's, which is
+# what lets the pose-based decision (torso angle / hip drop) work instead of
+# falling back to the crude box-only test. Override with YOLO_MODEL=yolov8n-pose.pt
+# on a weaker GPU, or yolov8m-pose.pt for even better accuracy.
+YOLO_MODEL = os.environ.get("YOLO_MODEL", "yolov8s-pose.pt")
 SHOW_WINDOW = os.environ.get("SHOW_WINDOW", "0") == "1"
 STREAM_TO_DASHBOARD = os.environ.get("STREAM_TO_DASHBOARD", "1") == "1"
 STREAM_FPS = int(os.environ.get("STREAM_FPS", "12"))
@@ -98,9 +109,24 @@ TORSO_ANGLE = 55.0      # torso tilted more than this many deg from vertical -> 
 VGAP_MIN = 0.08         # hips this fraction of box-height below shoulders -> upright
 ASPECT_VETO = 0.6       # a clearly tall box (aspect <= this) can never be a fall
 BOX_RATIO_NOKP = 1.3    # no trusted pose: box must be at least this wide -> lying
-KP_CONF = 0.5           # min keypoint confidence to trust a landmark
+KP_CONF = 0.35          # min keypoint confidence to trust a landmark (lowered so
+                        #   the pose is trusted more often -> fewer box-only misses)
 PERSON_CONF = 0.4       # min person-detection confidence
 COOLDOWN = 5.0          # seconds before a new fall can be reported again
+
+# ---- temporal motion detection (MotionTracker) ------------------------------
+# A fall is a DYNAMIC event: a fast downward motion, then a low/collapsed pose.
+# Single-frame geometry alone misses falls toward/away from the camera (the box
+# stays tall). All positions are normalized to frame height (0..1) so thresholds
+# are resolution-independent.
+MOTION_WINDOW = 2.0         # seconds of history kept for the standing-height baseline
+DROP_WINDOW = 0.5           # seconds over which downward velocity is measured
+DROP_VELOCITY = 0.35        # normalized vertical-center speed (per s) that counts
+                            #   as "falling" (slow sitting is ~0.1, a fall ~0.6+)
+DROP_ARMED_SECONDS = 2.5    # a detected drop stays relevant this long (> FALL_SECONDS)
+HEIGHT_DROP_RATIO = 0.65    # box height below this fraction of the recent standing
+                            #   height -> collapsed
+LYING_ASPECT = 0.9          # box at least this wide-ish also counts as collapsed
 
 # COCO-17 keypoint indices
 L_SH, R_SH, L_HIP, R_HIP = 5, 6, 11, 12
@@ -193,7 +219,65 @@ def decide_fall(box_xyxy, kp_xy=None, kp_conf=None):
     return fall_now, float(confidence)
 
 
-def analyze(r):
+class MotionTracker:
+    """The TEMPORAL half of the detector: it watches how the person's vertical
+    position and box height change over ~1 s to catch the dynamic signature of a
+    fall (a fast drop, then a low posture). This complements the single-frame
+    decide_fall(): a collapse toward/away from the camera keeps a tall-ish box,
+    so posture alone misses it, but the sudden downward motion does not.
+
+    Fed one normalized sample per frame; keeps only MOTION_WINDOW seconds.
+    Pure w.r.t. the clock (time is passed in) so it is unit-testable.
+    """
+
+    def __init__(self):
+        self.hist = []          # (t, cy, h), all normalized to frame height 0..1
+        self.drop_until = 0.0   # a detected drop stays "armed" until this time
+
+    def update(self, cy, h, t):
+        """cy = box vertical centre (/frame_h), h = box height (/frame_h)."""
+        self.hist.append((t, cy, h))
+        self.hist = [p for p in self.hist if p[0] >= t - MOTION_WINDOW]
+
+        # standing baseline = tallest box seen recently; how collapsed are we now
+        base_h = max((p[2] for p in self.hist), default=h)
+        height_ratio = h / (base_h + 1e-6)
+
+        # downward velocity over the last DROP_WINDOW seconds (cy grows downward)
+        recent = [p for p in self.hist if p[0] >= t - DROP_WINDOW]
+        dy_per_s = 0.0
+        if len(recent) >= 2:
+            t0, cy0, _ = recent[0]
+            dt = t - t0
+            if dt > 1e-3:
+                dy_per_s = (cy - cy0) / dt
+
+        if dy_per_s >= DROP_VELOCITY:
+            self.drop_until = t + DROP_ARMED_SECONDS
+
+        return {
+            "dropped": t <= self.drop_until,
+            "height_ratio": height_ratio,
+            "dy_per_s": dy_per_s,
+            "confidence": min(max(dy_per_s, 0.0) / (DROP_VELOCITY * 1.5), 1.0),
+        }
+
+
+def combine_fall(posture_fall, confidence, aspect, motion):
+    """Merge the single-frame posture verdict (decide_fall) with the temporal
+    verdict (MotionTracker). A fast drop that ends in a low OR wide-ish posture
+    is a fall even when the box never becomes clearly wide -- the exact case
+    single-frame geometry misses. Kept pure so it is unit-testable."""
+    fall_now, conf = posture_fall, confidence
+    collapsed = (motion["height_ratio"] < HEIGHT_DROP_RATIO
+                 or aspect >= LYING_ASPECT)
+    if motion["dropped"] and collapsed:
+        fall_now = True
+        conf = max(conf, 0.5 + 0.5 * motion["confidence"])
+    return fall_now, conf
+
+
+def analyze(r, frame_h=None, tracker=None, t=0.0):
     """Extract the most prominent person from an ultralytics Result and decide.
 
     Returns (fall_now, confidence, dbg) where dbg is the pose_metrics dict (or
@@ -219,6 +303,19 @@ def analyze(r):
     fall_now, confidence = decide_fall(xyxy[i], kp_xy, kp_conf)
     dbg = pose_metrics(xyxy[i], kp_xy, kp_conf)
     dbg["person"] = float(confs[i])
+
+    # temporal layer: fold in the motion verdict when a tracker + frame size are
+    # available (they are during live capture; omitted in the pure unit tests).
+    if tracker is not None and frame_h:
+        x1, y1, x2, y2 = xyxy[i]
+        cy = ((y1 + y2) / 2.0) / frame_h
+        h = (y2 - y1) / frame_h
+        motion = tracker.update(cy, h, t)
+        fall_now, confidence = combine_fall(fall_now, confidence,
+                                            dbg["aspect"], motion)
+        dbg["dropped"] = motion["dropped"]
+        dbg["height_ratio"] = motion["height_ratio"]
+
     return fall_now, confidence, dbg
 
 
@@ -353,6 +450,10 @@ def _annotate(r, state, dbg):
             line += f"  torso={dbg['angle']:.0f}deg  vgap={dbg['vgap']:.2f}"
         else:
             line += "  (no trusted pose)"
+        if dbg.get("height_ratio") is not None:
+            line += f"  hr={dbg['height_ratio']:.2f}"
+            if dbg.get("dropped"):
+                line += " DROP"
         cv2.putText(frame, line, (16, 70), cv2.FONT_HERSHEY_SIMPLEX,
                     0.6, (0, 255, 255), 2, cv2.LINE_AA)
     if ROTATE:
@@ -374,6 +475,7 @@ def _run_once(model, reporter, src, device, uploader):
 
     grabber = FrameGrabber(cap)
     grabber.start()
+    tracker = MotionTracker()   # temporal state, reset per stream session
     frames = 0
     try:
         while True:
@@ -388,15 +490,19 @@ def _run_once(model, reporter, src, device, uploader):
 
             r = model.predict(frame, verbose=False, device=device,
                               conf=PERSON_CONF)[0]
-            fall_now, confidence, dbg = analyze(r)
+            fall_now, confidence, dbg = analyze(
+                r, frame_h=frame.shape[0], tracker=tracker, t=time.time())
             state = reporter.update(fall_now, confidence)
 
             frames += 1
             if frames % 30 == 0 and dbg:   # one diagnostic line per ~30 frames
                 ang = "-" if dbg["angle"] is None else f"{dbg['angle']:.0f}"
                 vg = "-" if dbg["vgap"] is None else f"{dbg['vgap']:.2f}"
+                drop = "drop" if dbg.get("dropped") else "-"
+                hr = dbg.get("height_ratio")
+                hr = "-" if hr is None else f"{hr:.2f}"
                 print(f"[AI] {state} aspect={dbg['aspect']:.2f} "
-                      f"torso={ang} vgap={vg}")
+                      f"torso={ang} vgap={vg} {drop} hr={hr}")
 
             if uploader is not None or SHOW_WINDOW:
                 annotated = _annotate(r, state, dbg)
