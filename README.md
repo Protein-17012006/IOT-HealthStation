@@ -1,4 +1,5 @@
 # Smart Patient / Elderly Monitoring Station (IoT + AI)
+<img width="960" height="1280" alt="IOT_Device" src="https://github.com/user-attachments/assets/ec4d9559-d6bd-45c6-904e-d381990438e9" />
 
 An edge-computing IoT health monitoring station. The physical layer (ESP32)
 reads body/room **temperature & humidity**, **ambient sound**, and **RFID
@@ -18,7 +19,7 @@ ESP32 (physical layer)  --USB serial JSON-->  Jetson Nano (edge server)  --HTTP-
   LED / Fan / LCD (actuators)                    Flask web UI                          manual control
 ```
 
-## How this meets the 5 tasks
+## 5 criteria
 | Task | Where |
 |------|-------|
 | 1. Physical layer (≥1 digital + ≥1 analog sensor, ≥2 actuators) | `firmware/esp32_health_station/` — DHT(digital), KY-037(analog), RC522; LED+Fan+LCD |
