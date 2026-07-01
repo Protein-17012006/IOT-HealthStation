@@ -1,0 +1,44 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Smart Patient Monitoring Station - ECR repository for the dashboard image.
+  Deployed FIRST so the image can be built and pushed before the main stack
+  (which references it) is created.
+
+Parameters:
+  RepoName:
+    Type: String
+    Default: health-station-dashboard
+    Description: ECR repository name.
+
+Resources:
+  Repository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref RepoName
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: MUTABLE
+      # keep only the 5 most recent images so old builds don't accrue storage
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "keep last 5 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 5
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+
+Outputs:
+  RepositoryUri:
+    Description: URI to docker push the dashboard image to.
+    Value: !GetAtt Repository.RepositoryUri
+  RepositoryName:
+    Value: !Ref RepoName

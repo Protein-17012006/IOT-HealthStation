@@ -134,4 +134,93 @@ edge/
   run_fall_detector.sh   launcher for the GPU detector (WSL)
   main.py              edge orchestrator
   webapp/              Flask dashboard (live data, stats, settings, control)
+aws/                   Cloud deployment (CloudFormation + Docker + scripts)
+  cloudformation/ecr.yaml    ECR repository
+  cloudformation/main.yaml   VPC + RDS + ECS Fargate + ALB + API Gateway
+  deploy.sh / teardown.sh    one-shot deploy / cleanup
+  .env.aws.example           local env pointing the edge devices at the cloud
 ```
+
+---
+
+## Cloud deployment (AWS) — hybrid edge + cloud
+
+The database and the dashboard can run on AWS while the parts that need real
+hardware stay at home. This is a **hybrid** architecture: the **ESP32 serial
+reader** (`main.py`) and the **GPU YOLO detector** must run on the local machine
+(USB + GPU can't move to Fargate), so they connect to the cloud backend over the
+internet.
+
+```
+[ESP32]--serial-->[main.py @home]--POST /api/ingest (token)--\
+[YOLO @GPU home]--POST /api/fall,/api/ai_frame (token)--\     \
+                                                         v     v
+Browser --> API Gateway (HTTP API) --proxy--> ALB :80 --> ECS Fargate (Flask, :8080) --> RDS MySQL
+        \--> ALB DNS (full features: SSE + live video) ---/                               (PRIVATE, VPC-only)
+```
+All edge devices reach the cloud over **authenticated HTTP** through the ALB —
+the database is **private** (never exposed to the internet).
+
+| AWS service | Role |
+|-------------|------|
+| **RDS** (MySQL 8) | the `health_station` database (was local MariaDB) |
+| **ECS Fargate** | runs the Flask dashboard container (serves the React SPA + REST) |
+| **ALB** | internet-facing entry — SSE + MJPEG video work here |
+| **API Gateway** (HTTP API) | managed public API URL, proxies to the ALB |
+| **ECR** | holds the built dashboard image |
+| **Secrets Manager** | RDS credentials, injected into the ECS task |
+| **CloudFormation** | provisions everything (`aws/cloudformation/*.yaml`) |
+
+### Deploy
+Prereqs: AWS CLI logged in, Docker Desktop **running**, bash + curl.
+```bash
+bash aws/deploy.sh          # builds+pushes the image, creates both stacks
+```
+It prints the outputs (**AlbUrl**, **ApiGatewayUrl**, **RdsEndpoint**, secret
+ARNs, region `ap-southeast-1`) plus the **dashboard login** and the **detector
+token**. RDS takes ~5–10 min the first time.
+
+### Point the local edge devices at the cloud
+Copy `aws/.env.aws.example`, fill in the outputs, then run the local processes.
+Both use the ingest **token** (the cloud rejects unauthenticated POSTs with 403);
+neither touches the database directly:
+```bash
+# edge server: ESP32 serial -> POSTs readings to the cloud over HTTP
+$env:CLOUD_URL="<AlbUrl>"; $env:INGEST_TOKEN="<token>"
+$env:SERIAL_PORT="COM7"; $env:SIM=0
+python edge/main.py
+
+# GPU detector: falls + annotated video -> cloud dashboard (use the ALB URL)
+DASHBOARD_URL=<AlbUrl> INGEST_TOKEN=<token> \
+  ./run_fall_detector.sh "http://<iphone-ip>:8081/video"
+```
+
+Open **AlbUrl** in a browser, **log in** with the dashboard username/password,
+and you get the full dashboard (live video + SSE). The **ApiGatewayUrl** serves
+the same app, but because API Gateway buffers and times out long-lived
+connections, SSE falls back to 2 s polling and the MJPEG video feeds don't
+stream through it.
+
+### Turn off / teardown
+See **[aws/RUNBOOK.md](aws/RUNBOOK.md)** for the full on/off checklist. Quick
+options: **pause** (scale ECS to 0 + stop RDS — keeps the stack, data and URLs,
+~$0.5/day) or **teardown** (`bash aws/teardown.sh` — deletes everything, ~$0).
+
+### Security
+- **Private database.** RDS is **not publicly accessible** — only the ECS tasks
+  (inside the VPC) can reach it. The local edge devices never open a DB
+  connection; they push data through the authenticated app tier (`POST
+  /api/ingest`). This also sidesteps home CGNAT (no fixed IP to allow-list).
+- **Authentication.** The dashboard + all read/control APIs require **HTTP Basic
+  Auth**; the device-ingest endpoints (`/api/ingest`, `/api/fall`,
+  `/api/ai_frame`) require a shared **`X-Ingest-Token`** instead. Both
+  credentials are auto-generated into **Secrets Manager** and injected into the
+  ECS task — nothing secret is in git. (Auth is off when the env vars are empty,
+  so local/SIM runs are unchanged.)
+- **Encryption.** RDS storage is **encrypted at rest** (KMS). API Gateway is
+  HTTPS; the ALB is HTTP-only for demo simplicity (real TLS needs a domain +
+  ACM certificate).
+- **Least privilege.** The ECS task role can read only its three specific
+  Secrets Manager secrets; security groups allow only ALB→ECS→RDS hops.
+
+> **Cost note.** Left fully running this is ~US$1–2/day (ALB + RDS + Fargate).

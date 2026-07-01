@@ -8,7 +8,9 @@ Ties everything together:
 
 Run the web UI (webapp/app.py) as a separate process.
 """
+import json
 import time
+import urllib.request
 
 import config
 import db
@@ -19,14 +21,20 @@ from serial_link import SerialLink
 
 def main():
     print("== Smart Patient/Elderly Monitoring Station -- edge server ==")
-    print("Initializing database...")
-    db.init_db()
+    cloud = bool(config.CLOUD_URL)
+    if cloud:
+        # DB lives on AWS (private) -> push readings over HTTP, don't touch it.
+        print(f"[cloud] pushing readings to {config.CLOUD_URL}/api/ingest")
+    else:
+        print("Initializing database...")
+        db.init_db()
 
     link = SerialLink()
     link.start()
 
     detector = FallDetector()
-    if config.LOCAL_AI and db.get_settings().get("fall_detection", "1") == "1":
+    if (not cloud and config.LOCAL_AI
+            and db.get_settings().get("fall_detection", "1") == "1"):
         detector.start(on_fall=lambda c: _on_fall(c))
         print("[AI] local in-process fall detector started (LOCAL_AI=1)")
     else:
@@ -38,17 +46,49 @@ def main():
         while True:
             msg = link.get_nowait()
             if msg and msg.get("type") == "reading":
-                _handle_reading(msg, link, detector)
+                if cloud:
+                    _handle_reading_cloud(msg, link)
+                else:
+                    _handle_reading(msg, link, detector)
 
-            # forward any manual commands queued by the web UI
-            for cmd in db.fetch_unconsumed_commands():
-                link.send_command(cmd)
+            # In local mode, forward manual UI commands here. In cloud mode the
+            # /api/ingest response already carries them, so nothing to poll.
+            if not cloud:
+                for cmd in db.fetch_unconsumed_commands():
+                    link.send_command(cmd)
 
             time.sleep(0.05)
     except KeyboardInterrupt:
         print("\nStopping...")
         link.stop()
         detector.stop()
+
+
+def _handle_reading_cloud(msg, link):
+    """Cloud mode: POST the reading to the dashboard and relay the command it
+    returns to the ESP32. The server does the DB writes + rules + fall override,
+    so RDS never has to be reachable from here (see webapp api_ingest)."""
+    payload = {"temp": msg.get("temp"), "hum": msg.get("hum"),
+               "sound": msg.get("sound"), "rfid": msg.get("rfid")}
+    req = urllib.request.Request(
+        f"{config.CLOUD_URL}/api/ingest",
+        data=json.dumps(payload).encode(),
+        headers={"Content-Type": "application/json",
+                 "X-Ingest-Token": config.INGEST_TOKEN},
+        method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            resp = json.loads(r.read().decode())
+    except Exception as e:  # network blip -> skip this reading, keep running
+        print("[cloud] ingest failed:", e)
+        return
+
+    print(f"[reading->cloud] temp={payload['temp']} hum={payload['hum']} "
+          f"sound={payload['sound']}"
+          + (f" rfid={payload['rfid']}" if payload["rfid"] else ""))
+    cmd = resp.get("command") or {}
+    if cmd:
+        link.send_command(cmd)
 
 
 def _on_fall(confidence):
