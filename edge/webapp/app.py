@@ -33,6 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config  # noqa: E402
 import db  # noqa: E402
 import rules  # noqa: E402
+import notify  # noqa: E402  (sibling module in webapp/)
 
 # Built React/Vite app (frontend/dist). Served at the app root; falls back to the
 # bundled Jinja template if the SPA hasn't been built yet.
@@ -274,6 +275,7 @@ def api_fall():
     source = str(data.get("source", "AI"))[:32]
     db.insert_event("fall", "critical",
                     f"FALL DETECTED by {source} (confidence {conf:.2f})")
+    notify.notify_fall(conf, source)   # best-effort email alert (no-op if unset)
     return jsonify({"ok": True})
 
 
