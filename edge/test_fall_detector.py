@@ -110,7 +110,8 @@ def test_reporter_requires_persistence_then_fires_once():
     fd.time = types.SimpleNamespace(time=lambda: clock["t"])
     posts = []
     fd.requests = types.SimpleNamespace(
-        post=lambda url, json=None, timeout=None: posts.append((url, json)))
+        post=lambda url, json=None, timeout=None, headers=None:
+            posts.append((url, json)))
 
     rep = fd.Reporter()
     rep.update(True, 0.9)                              # candidate begins
@@ -130,13 +131,55 @@ def test_reporter_ignores_brief_fall():
     fd.time = types.SimpleNamespace(time=lambda: clock["t"])
     posts = []
     fd.requests = types.SimpleNamespace(
-        post=lambda url, json=None, timeout=None: posts.append((url, json)))
+        post=lambda url, json=None, timeout=None, headers=None:
+            posts.append((url, json)))
 
     rep = fd.Reporter()
     rep.update(True, 0.9)                              # candidate
     clock["t"] = 2000.0 + fd.FALL_SECONDS * 0.3
     rep.update(False, 0.0)                             # gone before the window -> reset
     assert posts == []
+
+
+def test_motiontracker_flags_a_rapid_drop():
+    """Standing, then the vertical centre jumps down fast and the box shrinks:
+    the tracker should arm 'dropped' and report a low height ratio."""
+    tr = fd.MotionTracker()
+    tr.update(cy=0.50, h=0.60, t=0.0)              # standing tall
+    m = tr.update(cy=0.85, h=0.20, t=0.5)          # collapsed in 0.5s
+    assert m["dropped"] is True
+    assert m["height_ratio"] < fd.HEIGHT_DROP_RATIO
+
+
+def test_motiontracker_ignores_slow_sitting():
+    """A gradual descent (sitting down) never reaches the drop velocity."""
+    tr = fd.MotionTracker()
+    m = None
+    for k in range(5):                              # 2s, cy 0.50 -> 0.58 slowly
+        m = tr.update(cy=0.50 + 0.02 * k, h=0.60 - 0.01 * k, t=0.5 * k)
+    assert m["dropped"] is False
+
+
+def test_combine_fall_keeps_posture_fall():
+    still = {"dropped": False, "height_ratio": 1.0, "confidence": 0.0}
+    fall, conf = fd.combine_fall(True, 0.9, aspect=0.4, motion=still)
+    assert fall is True and conf == 0.9
+
+
+def test_combine_fall_drop_into_collapse_fires_without_wide_box():
+    """The case single-frame geometry misses: posture says NOT a fall (tallish
+    box, aspect 0.5), but a fast drop ended in a collapsed (low) posture."""
+    motion = {"dropped": True, "height_ratio": 0.3, "confidence": 0.8}
+    fall, conf = fd.combine_fall(False, 0.2, aspect=0.5, motion=motion)
+    assert fall is True
+    assert conf > 0.5
+
+
+def test_combine_fall_drop_without_collapse_does_not_fire():
+    """A fast motion that does NOT end low/wide (e.g. still upright) is ignored."""
+    motion = {"dropped": True, "height_ratio": 0.9, "confidence": 0.8}
+    fall, _ = fd.combine_fall(False, 0.2, aspect=0.4, motion=motion)
+    assert fall is False
 
 
 if __name__ == "__main__":
