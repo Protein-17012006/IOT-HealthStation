@@ -1,6 +1,6 @@
 -- ===========================================================================
 --  Smart Elderly Monitoring Station -- database schema (Task#3)
---  Run once on the Jetson:   sudo mysql < schema.sql
+--  Run once on the edge PC:  sudo mysql < schema.sql
 --  (db.init_db() also creates everything automatically, this is for reference
 --   and for the project report appendix.)
 -- ===========================================================================
