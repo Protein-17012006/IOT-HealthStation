@@ -1,0 +1,8 @@
+# Dependencies for the CLOUD web image only (ECS Fargate).
+# The dashboard (webapp/app.py) only serves the SPA + REST/SSE and talks to the
+# DB -- it does NOT run the camera / YOLO code, so opencv / torch / pyserial /
+# numpy from edge/requirements.txt are deliberately left out to keep the image
+# small. The GPU fall detector stays on the local machine.
+Flask>=3.0
+PyMySQL>=1.1
+gunicorn>=21.2

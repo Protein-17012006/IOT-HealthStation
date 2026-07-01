@@ -1,0 +1,12 @@
+# keep the build context small + reproducible (node_modules/dist are rebuilt
+# inside the image; weights and venvs are never needed in the web image)
+**/node_modules
+**/dist
+**/__pycache__
+*.py[cod]
+.venv
+venv
+env
+*.pt
+bus.jpg
+run_fall_detector.sh

@@ -1,0 +1,384 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Smart Patient Monitoring Station - cloud backend.
+  VPC (2 public subnets, no NAT) + RDS MySQL + ECS Fargate (Flask dashboard)
+  behind an internet-facing ALB, fronted by an API Gateway HTTP API.
+  The ESP32 serial reader and the GPU YOLO detector stay on the local machine
+  and connect to RDS / the ALB over the internet.
+
+Parameters:
+  ImageUri:
+    Type: String
+    Description: Full ECR image URI (repo:tag) built and pushed before this stack.
+  DbName:
+    Type: String
+    Default: health_station
+  DbUsername:
+    Type: String
+    Default: admin
+  ContainerPort:
+    Type: Number
+    Default: 8080
+  DbInstanceClass:
+    Type: String
+    Default: db.t4g.micro
+
+Resources:
+
+  # ---- Networking -----------------------------------------------------------
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{ Key: Name, Value: health-station-vpc }]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags: [{ Key: Name, Value: health-station-igw }]
+
+  VpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.0.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags: [{ Key: Name, Value: health-station-public-a }]
+
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+      Tags: [{ Key: Name, Value: health-station-public-b }]
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [{ Key: Name, Value: health-station-public-rt }]
+
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetARouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnetA
+
+  SubnetBRouteAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnetB
+
+  # ---- Security groups ------------------------------------------------------
+  AlbSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ALB - public HTTP
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: public HTTP
+      Tags: [{ Key: Name, Value: health-station-alb-sg }]
+
+  EcsSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ECS tasks - only from the ALB
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref ContainerPort
+          ToPort: !Ref ContainerPort
+          SourceSecurityGroupId: !Ref AlbSg
+          Description: ALB to container
+      Tags: [{ Key: Name, Value: health-station-ecs-sg }]
+
+  RdsSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: RDS MySQL - reachable ONLY from the ECS tasks (private DB)
+      VpcId: !Ref Vpc
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          SourceSecurityGroupId: !Ref EcsSg
+          Description: ECS to RDS (no public/internet ingress)
+      Tags: [{ Key: Name, Value: health-station-rds-sg }]
+
+  # ---- RDS MySQL ------------------------------------------------------------
+  DbSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: health-station RDS subnets
+      SubnetIds: [!Ref PublicSubnetA, !Ref PublicSubnetB]
+
+  Database:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      Engine: mysql
+      EngineVersion: "8.0"
+      DBInstanceClass: !Ref DbInstanceClass
+      AllocatedStorage: "20"
+      StorageType: gp3
+      DBName: !Ref DbName
+      MasterUsername: !Ref DbUsername
+      ManageMasterUserPassword: true   # RDS creates + rotates a Secrets Manager secret
+      DBSubnetGroupName: !Ref DbSubnetGroup
+      VPCSecurityGroups: [!Ref RdsSg]
+      PubliclyAccessible: false       # private DB: only the ECS tasks can reach it
+      MultiAZ: false
+      BackupRetentionPeriod: 0
+      DeleteAutomatedBackups: true
+      StorageEncrypted: true          # data-at-rest encryption (default aws/rds KMS key)
+      Tags: [{ Key: Name, Value: health-station-db }]
+
+  # ---- App auth secrets (dashboard login + device ingest token) -------------
+  DashPasswordSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: health-station-dash
+      Description: Dashboard HTTP Basic Auth credentials
+      GenerateSecretString:
+        SecretStringTemplate: '{"username":"admin"}'
+        GenerateStringKey: password
+        PasswordLength: 20
+        ExcludeCharacters: '"@/\`$:'
+
+  IngestTokenSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: health-station-ingest
+      Description: Shared token the GPU detector sends on /api/fall + /api/ai_frame
+      GenerateSecretString:
+        SecretStringTemplate: '{}'
+        GenerateStringKey: token
+        PasswordLength: 40
+        ExcludePunctuation: true
+
+  # ---- ECS ------------------------------------------------------------------
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: /ecs/health-station
+      RetentionInDays: 7
+
+  ExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: health-station-ecs-exec
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: read-secrets
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource:
+                  - !GetAtt Database.MasterUserSecret.SecretArn
+                  - !Ref DashPasswordSecret
+                  - !Ref IngestTokenSecret
+              - Effect: Allow
+                Action: kms:Decrypt
+                Resource: "*"   # RDS-managed secret uses the aws/secretsmanager key
+
+  Cluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: health-station
+
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: health-station-web
+      RequiresCompatibilities: [FARGATE]
+      NetworkMode: awsvpc
+      Cpu: "256"
+      Memory: "512"
+      ExecutionRoleArn: !GetAtt ExecutionRole.Arn
+      ContainerDefinitions:
+        - Name: web
+          Image: !Ref ImageUri
+          Essential: true
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+          Environment:
+            - { Name: DB_HOST, Value: !GetAtt Database.Endpoint.Address }
+            - { Name: DB_PORT, Value: "3306" }
+            - { Name: DB_NAME, Value: !Ref DbName }
+            - { Name: WEB_HOST, Value: "0.0.0.0" }
+            - { Name: WEB_PORT, Value: !Ref ContainerPort }
+            - { Name: DASH_USER, Value: "admin" }
+          Secrets:
+            - Name: DB_USER
+              ValueFrom: !Sub "${Database.MasterUserSecret.SecretArn}:username::"
+            - Name: DB_PASS
+              ValueFrom: !Sub "${Database.MasterUserSecret.SecretArn}:password::"
+            - Name: DASH_PASS
+              ValueFrom: !Sub "${DashPasswordSecret}:password::"
+            - Name: INGEST_TOKEN
+              ValueFrom: !Sub "${IngestTokenSecret}:token::"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: web
+
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: [HttpListener, Database]
+    Properties:
+      ServiceName: health-station-web
+      Cluster: !Ref Cluster
+      TaskDefinition: !Ref TaskDefinition
+      LaunchType: FARGATE
+      DesiredCount: 1
+      HealthCheckGracePeriodSeconds: 120
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets: [!Ref PublicSubnetA, !Ref PublicSubnetB]
+          SecurityGroups: [!Ref EcsSg]
+      LoadBalancers:
+        - TargetGroupArn: !Ref TargetGroup
+          ContainerName: web
+          ContainerPort: !Ref ContainerPort
+
+  # ---- Application Load Balancer --------------------------------------------
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: health-station-alb
+      Type: application
+      Scheme: internet-facing
+      Subnets: [!Ref PublicSubnetA, !Ref PublicSubnetB]
+      SecurityGroups: [!Ref AlbSg]
+
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: health-station-tg
+      VpcId: !Ref Vpc
+      Port: !Ref ContainerPort
+      Protocol: HTTP
+      TargetType: ip
+      HealthCheckPath: /healthz     # auth-free, DB-free liveness probe (see app.py)
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 5
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 3
+      Matcher: { HttpCode: "200" }
+      TargetGroupAttributes:
+        - { Key: deregistration_delay.timeout_seconds, Value: "10" }
+
+  HttpListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref LoadBalancer
+      Port: 80
+      Protocol: HTTP
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref TargetGroup
+
+  # ---- API Gateway (HTTP API) -> ALB ----------------------------------------
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: health-station-api
+      ProtocolType: HTTP
+
+  AlbIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: HTTP_PROXY
+      IntegrationMethod: ANY
+      IntegrationUri: !Sub "http://${LoadBalancer.DNSName}/{proxy}"
+      PayloadFormatVersion: "1.0"
+
+  RootIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: HTTP_PROXY
+      IntegrationMethod: ANY
+      IntegrationUri: !Sub "http://${LoadBalancer.DNSName}/"
+      PayloadFormatVersion: "1.0"
+
+  ProxyRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "ANY /{proxy+}"
+      Target: !Sub "integrations/${AlbIntegration}"
+
+  RootRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: "ANY /"
+      Target: !Sub "integrations/${RootIntegration}"
+
+  DefaultStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: "$default"
+      AutoDeploy: true
+
+Outputs:
+  AlbUrl:
+    Description: Full-feature dashboard URL (SSE + live video work here).
+    Value: !Sub "http://${LoadBalancer.DNSName}"
+  ApiGatewayUrl:
+    Description: Managed API URL (non-stream endpoints; SSE falls back to polling).
+    Value: !GetAtt HttpApi.ApiEndpoint
+  RdsEndpoint:
+    Description: RDS host (PRIVATE - only the ECS tasks connect; not internet-reachable).
+    Value: !GetAtt Database.Endpoint.Address
+  RdsSecretArn:
+    Description: Secrets Manager ARN holding {username,password} for RDS.
+    Value: !GetAtt Database.MasterUserSecret.SecretArn
+  DashSecretArn:
+    Description: Secrets Manager ARN with the dashboard login {username,password}.
+    Value: !Ref DashPasswordSecret
+  IngestSecretArn:
+    Description: Secrets Manager ARN with the device ingest {token}.
+    Value: !Ref IngestTokenSecret
