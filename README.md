@@ -11,6 +11,12 @@ serves a **web dashboard**.
 > Theme: Healthcare + AI. Maps the assignment's "Arduino" role onto the **ESP32**
 > and the "Raspberry Pi / edge server" role onto the **Jetson Nano**.
 
+> **Deployment:** runs fully **local** (Jetson/PC + MariaDB) **or** on **AWS
+> cloud** — RDS + ECS Fargate + ALB + API Gateway, provisioned by
+> **CloudFormation**, with the ESP32 and the GPU fall-detector staying on-site
+> and talking to the cloud over authenticated HTTP (hybrid edge ↔ cloud). See
+> [Cloud deployment (AWS)](#cloud-deployment-aws--hybrid-edge--cloud) below.
+
 ```
 ESP32 (physical layer)  --USB serial JSON-->  Jetson Nano (edge server)  --HTTP-->  Browser
   DHT11/22  (digital)                            MariaDB (store)                       dashboard
