@@ -27,12 +27,6 @@ _DEFAULT_SETTINGS = {
     "sound_high": "700",     # KY-037 raw ADC threshold (0-4095)
 }
 
-_SEED_PATIENTS = [
-    ("A1B2C3D4", "Nguyen Van A", "Room 101"),
-    ("11223344", "Tran Thi B", "Room 102"),
-]
-
-
 def _connect(with_db=True):
     return pymysql.connect(
         host=config.DB_HOST,
@@ -62,8 +56,7 @@ def init_db():
             """CREATE TABLE IF NOT EXISTS readings (
                    id INT AUTO_INCREMENT PRIMARY KEY,
                    ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                   temp FLOAT, humidity FLOAT, sound INT,
-                   patient_uid VARCHAR(32) NULL
+                   temp FLOAT, humidity FLOAT, sound INT
                )"""
         )
         cur.execute(
@@ -81,12 +74,6 @@ def init_db():
                )"""
         )
         cur.execute(
-            """CREATE TABLE IF NOT EXISTS patients (
-                   uid VARCHAR(32) PRIMARY KEY,
-                   name VARCHAR(64), note VARCHAR(255)
-               )"""
-        )
-        cur.execute(
             """CREATE TABLE IF NOT EXISTS commands (
                    id INT AUTO_INCREMENT PRIMARY KEY,
                    ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -98,24 +85,19 @@ def init_db():
                 "INSERT IGNORE INTO settings (skey, svalue) VALUES (%s, %s)",
                 (k, v),
             )
-        for uid, name, note in _SEED_PATIENTS:
-            cur.execute(
-                "INSERT IGNORE INTO patients (uid, name, note) VALUES (%s,%s,%s)",
-                (uid, name, note),
-            )
     conn.close()
 
 
 # --------------------------------------------------------------------------- #
 #  Writes
 # --------------------------------------------------------------------------- #
-def insert_reading(temp, humidity, sound, uid=None):
+def insert_reading(temp, humidity, sound):
     conn = _connect()
     with conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO readings (temp, humidity, sound, patient_uid) "
-            "VALUES (%s,%s,%s,%s)",
-            (temp, humidity, sound, uid),
+            "INSERT INTO readings (temp, humidity, sound) "
+            "VALUES (%s,%s,%s)",
+            (temp, humidity, sound),
         )
     conn.close()
 
@@ -180,17 +162,6 @@ def get_settings():
     return {r["skey"]: r["svalue"] for r in rows}
 
 
-def get_patient(uid):
-    if not uid:
-        return None
-    conn = _connect()
-    with conn.cursor() as cur:
-        cur.execute("SELECT uid, name, note FROM patients WHERE uid=%s", (uid,))
-        row = cur.fetchone()
-    conn.close()
-    return row
-
-
 def latest_reading():
     conn = _connect()
     with conn.cursor() as cur:
@@ -198,7 +169,7 @@ def latest_reading():
         # % (otherwise MySQL receives '%%Y...' and returns the literal "%Y-...").
         cur.execute(
             "SELECT id, DATE_FORMAT(ts,'%Y-%m-%d %H:%i:%s') AS ts, "
-            "temp, humidity, sound, patient_uid "
+            "temp, humidity, sound "
             "FROM readings ORDER BY id DESC LIMIT 1"
         )
         row = cur.fetchone()

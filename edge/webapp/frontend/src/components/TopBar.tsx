@@ -1,20 +1,14 @@
 interface Props {
-  patient: string
   live: boolean
   status: { txt: string; col: string }
   muted: boolean
   onToggleMute: () => void
 }
 
-export default function TopBar({ patient, live, status, muted, onToggleMute }: Props) {
+export default function TopBar({ live, status, muted, onToggleMute }: Props) {
   return (
     <header className="topbar">
       <div className="brand"><span className="glyph">✚</span> Health Station</div>
-      <div className="sep" />
-      <div className="patient-id">
-        <span className="eyebrow">Patient</span>
-        <span className="who">{patient || '—'}</span>
-      </div>
       <div className="spacer" />
       <div className={'conn' + (live ? ' live' : '')}>
         <span className="dot" />{live ? 'live' : 'reconnecting…'}

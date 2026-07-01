@@ -1,5 +1,5 @@
 -- ===========================================================================
---  Smart Patient/Elderly Monitoring Station -- database schema (Task#3)
+--  Smart Elderly Monitoring Station -- database schema (Task#3)
 --  Run once on the Jetson:   sudo mysql < schema.sql
 --  (db.init_db() also creates everything automatically, this is for reference
 --   and for the project report appendix.)
@@ -10,12 +10,11 @@ USE health_station;
 
 -- Time-series sensor data from the physical layer ---------------------------
 CREATE TABLE IF NOT EXISTS readings (
-    id          INT AUTO_INCREMENT PRIMARY KEY,
-    ts          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    temp        FLOAT,
-    humidity    FLOAT,
-    sound       INT,
-    patient_uid VARCHAR(32) NULL
+    id       INT AUTO_INCREMENT PRIMARY KEY,
+    ts       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    temp     FLOAT,
+    humidity FLOAT,
+    sound    INT
 );
 
 -- Alerts / rule hits / AI events --------------------------------------------
@@ -31,13 +30,6 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE TABLE IF NOT EXISTS settings (
     skey   VARCHAR(64) PRIMARY KEY,
     svalue VARCHAR(255)
-);
-
--- RFID patient registry ------------------------------------------------------
-CREATE TABLE IF NOT EXISTS patients (
-    uid  VARCHAR(32) PRIMARY KEY,
-    name VARCHAR(64),
-    note VARCHAR(255)
 );
 
 -- Manual actuator commands queued by the Web UI ------------------------------
@@ -57,11 +49,6 @@ INSERT IGNORE INTO settings (skey, svalue) VALUES
     ('temp_low', '10'),
     ('hum_high', '80'),
     ('sound_high', '700');
-
--- Sample patients (match these UIDs to your physical RFID cards) -------------
-INSERT IGNORE INTO patients (uid, name, note) VALUES
-    ('A1B2C3D4', 'Nguyen Van A', 'Room 101'),
-    ('11223344', 'Tran Thi B', 'Room 102');
 
 -- Application user (run as root once, then use this account in config.py) ----
 -- CREATE USER IF NOT EXISTS 'iot'@'localhost' IDENTIFIED BY 'iotpass';

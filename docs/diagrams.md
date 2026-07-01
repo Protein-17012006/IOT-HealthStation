@@ -14,7 +14,7 @@ Each block matches the actual code in this repo.
 
 ## 1. Block Diagram — IoT architecture (hardware + software)
 > Shows the three tiers: physical layer (ESP32 + sensors/actuators), edge server
-> (Jetson Nano: serial, database, rules, AI), and the user/presentation tier.
+> (PC (Windows + WSL): serial, database, rules, AI), and the user/presentation tier.
 
 ```mermaid
 flowchart LR
@@ -22,27 +22,25 @@ flowchart LR
     direction TB
     DHT["DHT11/22<br/>Temp + Humidity<br/>(DIGITAL)"]
     KY["KY-037<br/>Sound level AO<br/>(ANALOG)"]
-    RFID["RC522 RFID<br/>Patient ID (SPI)"]
     ESP["ESP32 firmware<br/>(reads sensors,<br/>drives actuators,<br/>JSON over serial)"]
     LED["LED red / green"]
     FAN["Fan<br/>(via MOSFET / relay)"]
     LCD["I2C LCD 16x2"]
     DHT --> ESP
     KY --> ESP
-    RFID --> ESP
     ESP --> LED
     ESP --> FAN
     ESP --> LCD
   end
 
-  subgraph EDGE["EDGE SERVER — Jetson Nano"]
+  subgraph EDGE["EDGE SERVER — PC (Windows + WSL)"]
     direction TB
     SER["serial_link.py<br/>(pyserial)"]
     MAIN["main.py<br/>orchestrator"]
     RULES["rules.py<br/>edge analytics"]
     AI["ai_fall_detection.py<br/>MediaPipe / OpenCV"]
     WEB["webapp/app.py<br/>Flask REST + UI"]
-    DB[("MariaDB<br/>readings · events<br/>settings · patients<br/>commands")]
+    DB[("MariaDB<br/>readings · events<br/>settings · commands")]
     SER --> MAIN
     MAIN --> RULES
     MAIN --> DB
@@ -70,11 +68,9 @@ left to right direction
 skinparam packageStyle rectangle
 
 actor "Caregiver / Nurse" as Nurse
-actor "Patient" as Patient
 actor "AI Camera (iPhone)" as Cam
 
 rectangle "Smart Patient Monitoring Station" {
-  usecase "Check in via RFID"                       as UC1
   usecase "Monitor live vitals\n(temp / humidity / sound)" as UC2
   usecase "Detect fall (AI)"                        as UC3
   usecase "Trigger automatic actuator\n(fan / LED / LCD)"  as UC4
@@ -84,8 +80,6 @@ rectangle "Smart Patient Monitoring Station" {
   usecase "Manual actuator control"                 as UC8
 }
 
-Patient --> UC1
-Patient --> UC2
 Cam     --> UC3
 UC2 ..> UC4 : <<include>>
 UC3 ..> UC5 : <<include>>
@@ -110,10 +104,7 @@ flowchart TD
   Init --> Read{"New serial<br/>reading?"}
   Read -- no --> Manual
   Read -- yes --> Store["Store reading in MariaDB"]
-  Store --> RFIDq{"RFID UID present?"}
-  RFIDq -- yes --> Lookup["Lookup patient +<br/>log check-in event"]
-  RFIDq -- no --> Rules
-  Lookup --> Rules["Load settings +<br/>evaluate rules"]
+  Store --> Rules["Load settings +<br/>evaluate rules"]
   Rules --> Fever{"Temp >= fever<br/>threshold?"}
   Fever -- yes --> FanOn["fan = ON, LED = red<br/>log 'fever' event"]
   Fever -- no --> Loud{"Sound >= loud<br/>threshold?"}
@@ -137,15 +128,15 @@ flowchart TD
 ```mermaid
 sequenceDiagram
   participant ESP as ESP32 (sensors/actuators)
-  participant Edge as Jetson main.py
+  participant Edge as PC main.py
   participant DB as MariaDB
   participant AI as Fall Detector
   participant Web as Flask UI
   participant User as Caregiver
 
   loop every 1 second
-    ESP->>Edge: reading {temp,hum,sound,rfid}
-    Edge->>DB: INSERT reading (+ check-in event)
+    ESP->>Edge: reading {temp,hum,sound}
+    Edge->>DB: INSERT reading
     Edge->>DB: load settings
     Edge->>Edge: evaluate rules
     Edge-->>ESP: command {fan,led,lcd}
@@ -232,18 +223,16 @@ classDiagram
 ---
 
 ## 6. Entity-Relationship Diagram — database (Task#3)
-> The MariaDB schema (see `edge/schema.sql`).
+> The MariaDB schema (see `edge/schema.sql`). Four tables store all runtime data.
 
 ```mermaid
 erDiagram
-  PATIENTS ||--o{ READINGS : "identified in"
   READINGS {
     int id PK
     timestamp ts
     float temp
     float humidity
     int sound
-    string patient_uid FK
   }
   EVENTS {
     int id PK
@@ -255,11 +244,6 @@ erDiagram
   SETTINGS {
     string skey PK
     string svalue
-  }
-  PATIENTS {
-    string uid PK
-    string name
-    string note
   }
   COMMANDS {
     int id PK

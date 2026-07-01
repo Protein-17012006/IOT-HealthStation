@@ -554,7 +554,7 @@ def main():
     print(f"[AI] dashboard     : {DASHBOARD_URL}/api/fall")
     if uploader is not None:
         print(f"[AI] web video     : {DASHBOARD_URL}/api/ai_camera (annotated)")
-    print("[AI] running -- watch the dashboard 'Live patient feed' for the overlay")
+    print("[AI] running -- watch the dashboard 'Live AI feed' for the overlay")
 
     # A live camera/RTSP/MJPEG stream can hiccup (Wi-Fi, phone sleeping); a real
     # monitoring station must reconnect rather than die. A finite video file just

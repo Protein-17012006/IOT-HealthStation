@@ -2,33 +2,33 @@
 <img width="960" height="1280" alt="IOT_Device" src="https://github.com/user-attachments/assets/ec4d9559-d6bd-45c6-904e-d381990438e9" />
 
 An edge-computing IoT health monitoring station. The physical layer (ESP32)
-reads body/room **temperature & humidity**, **ambient sound**, and **RFID
-patient check-in**, and drives an **LED**, **fan**, and **LCD**. An **edge
-server (Jetson Nano)** stores everything in **MariaDB**, runs **AI fall
+reads body/room **temperature & humidity** and **ambient sound**, and drives an
+**LED**, **fan**, and **LCD**. An **edge server (a laptop/PC on Windows, with
+WSL for the GPU AI)** stores everything in **MariaDB**, runs **AI fall
 detection** on the **iPhone camera** stream, applies **conditional rules**, and
 serves a **web dashboard**.
 
 > Theme: Healthcare + AI. Maps the assignment's "Arduino" role onto the **ESP32**
-> and the "Raspberry Pi / edge server" role onto the **Jetson Nano**.
+> and the "Raspberry Pi / edge server" role onto a **laptop/PC (Windows + WSL)**.
 
-> **Deployment:** runs fully **local** (Jetson/PC + MariaDB) **or** on **AWS
+> **Deployment:** runs fully **local** (PC + MariaDB) **or** on **AWS
 > cloud** — RDS + ECS Fargate + ALB + API Gateway, provisioned by
 > **CloudFormation**, with the ESP32 and the GPU fall-detector staying on-site
 > and talking to the cloud over authenticated HTTP (hybrid edge ↔ cloud). See
 > [Cloud deployment (AWS)](#cloud-deployment-aws--hybrid-edge--cloud) below.
 
 ```
-ESP32 (physical layer)  --USB serial JSON-->  Jetson Nano (edge server)  --HTTP-->  Browser
-  DHT11/22  (digital)                            MariaDB (store)                       dashboard
-  KY-037    (analog)                             rules engine (analytics)              charts / stats
-  RC522     (RFID)                               AI fall detection  <-- iPhone camera  threshold editor
-  LED / Fan / LCD (actuators)                    Flask web UI                          manual control
+ESP32 (physical layer)  --USB serial JSON-->  PC (edge server)  --HTTP-->  Browser
+  DHT11/22  (digital)                            MariaDB (store)                  dashboard
+  KY-037    (analog)                             rules engine (analytics)         charts / stats
+  LED / Fan / LCD (actuators)                    AI fall detection  <-- iPhone    threshold editor
+                                                 Flask web UI        camera       manual control
 ```
 
 ## 5 criteria
 | Task | Where |
 |------|-------|
-| 1. Physical layer (≥1 digital + ≥1 analog sensor, ≥2 actuators) | `firmware/esp32_health_station/` — DHT(digital), KY-037(analog), RC522; LED+Fan+LCD |
+| 1. Physical layer (≥1 digital + ≥1 analog sensor, ≥2 actuators) | `firmware/esp32_health_station/` — DHT(digital), KY-037(analog); LED+Fan+LCD |
 | 2. Serial communication | `edge/serial_link.py` (USB serial, JSON both ways) |
 | 3. Database | `edge/db.py`, `edge/schema.sql` (MariaDB) |
 | 4. Edge analytics (conditional rule) | `edge/rules.py` + `edge/main.py` |
@@ -45,25 +45,21 @@ ESP32 (physical layer)  --USB serial JSON-->  Jetson Nano (edge server)  --HTTP-
 | LED red | GPIO 12 | + 220 Ω resistor |
 | LED green | GPIO 14 | + 220 Ω resistor |
 | Fan | GPIO 13 | **via MOSFET (IRLZ44N) or relay module** — do not drive the motor directly from a GPIO |
-| RC522 SDA/SS | GPIO 5 | SPI |
-| RC522 RST | GPIO 27 | |
-| RC522 SCK/MISO/MOSI | 18 / 19 / 23 | SPI bus |
 | LCD I2C SDA/SCL | 21 / 22 | address 0x27 (or 0x3F) |
 
 Arduino IDE libraries: **DHT sensor library (Adafruit)**, **LiquidCrystal_I2C**,
-**MFRC522**, **ArduinoJson**. Flash `firmware/esp32_health_station/esp32_health_station.ino`.
+**ArduinoJson**. Flash `firmware/esp32_health_station/esp32_health_station.ino`.
 
 ## 2. iPhone as the AI camera
 Install an IP-camera app (e.g. *IP Camera Lite* or *Larix Broadcaster*) and start
-an RTSP/MJPEG stream. Note the URL it shows, then set it on the Jetson:
+an RTSP/MJPEG stream. Note the URL it shows, then set it on the edge PC:
 ```bash
 export CAMERA_SOURCE="rtsp://<iphone-ip>:8554/live"
 ```
 For a quick test with a laptop webcam use `CAMERA_SOURCE=0`.
 
 ### AI fall detection on the GPU (`edge/fall_detector_yolo.py`)
-The fall detector runs as a **separate process** (designed for the Jetson, or a
-WSL2 box with an NVIDIA GPU). It runs **YOLOv8-pose** on CUDA, reads the iPhone
+The fall detector runs as a **separate process** (a WSL2 box with an NVIDIA GPU). It runs **YOLOv8-pose** on CUDA, reads the iPhone
 stream, and `POST`s a fall alert to the dashboard's `/api/fall` endpoint — so it
 stays decoupled from the serial/DB side. A fall = the person's bounding box is
 wider than tall, or the torso is past ~50° from vertical, sustained ~1.2 s.
@@ -78,7 +74,7 @@ The in-process MediaPipe/HOG detector in `main.py` is OFF by default
 (`LOCAL_AI=0`); set `LOCAL_AI=1` to run everything on one machine instead.
 The fall logic is unit-tested in `edge/test_fall_detector.py`.
 
-## 3. Database (Jetson)
+## 3. Database (edge PC)
 ```bash
 sudo apt install mariadb-server
 sudo mysql < edge/schema.sql          # creates DB, tables, seed data
@@ -100,7 +96,7 @@ python main.py
 In a second terminal:
 ```bash
 cd edge/webapp
-python app.py             # dashboard at http://<jetson-ip>:5000
+python app.py             # dashboard at http://<edge-ip>:5000
 ```
 
 ## 5. Try it with NO hardware (development on your laptop)
@@ -109,7 +105,7 @@ simulator, then add the real ESP32 later.
 ```bash
 # requires only MariaDB + the pip packages
 set SIM=1          &  (Windows PowerShell:  $env:SIM=1)
-python edge/main.py            # generates fake temp/humidity/sound + RFID scans
+python edge/main.py            # generates fake temp/humidity/sound
 python edge/webapp/app.py      # open http://localhost:5000
 ```
 Fall detection needs a camera; without one the dashboard just shows
@@ -119,13 +115,12 @@ Fall detection needs a camera; without one the dashboard just shows
 
 ## Suggested 2–3 min demo flow (for the video)
 1. Show the wired ESP32; readings appear on the LCD and stream in the dashboard.
-2. Scan an RFID card → "Current patient" updates + a check-in event is logged.
-3. Warm the DHT (or lower the fever threshold in the UI) → **fan turns on**, LED
+2. Warm the DHT (or lower the fever threshold in the UI) → **fan turns on**, LED
    goes red, a `fever` event is logged → show it persists in MariaDB.
-4. Step in front of the iPhone camera and lie down → **FALL DETECTED** banner +
+3. Step in front of the iPhone camera and lie down → **FALL DETECTED** banner +
    critical event.
-5. Show the history chart and the mean/min/max statistics.
-6. Use manual controls to toggle the fan / LED / LCD message.
+4. Show the history chart and the mean/min/max statistics.
+5. Use manual controls to toggle the fan / LED / LCD message.
 
 ## Repo layout
 ```
