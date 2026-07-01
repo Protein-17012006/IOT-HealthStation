@@ -1,5 +1,5 @@
 """
-Edge server orchestrator (Jetson Nano).
+Edge server orchestrator (a laptop/PC on Windows, with WSL for the GPU AI).
 
 Ties everything together:
   serial in  -> store reading -> apply rules (Task#4) -> command back to ESP32

@@ -1,7 +1,7 @@
 """
-Central configuration for the edge server (Jetson Nano).
+Central configuration for the edge server (a laptop/PC on Windows, with WSL).
 All values can be overridden with environment variables so you don't have to
-edit code when moving between your laptop (dev) and the Jetson (deployment).
+edit code when moving between local and cloud.
 """
 import os
 
@@ -11,7 +11,7 @@ def _env(name, default):
 
 
 # ---- Serial link to the ESP32 ----------------------------------------------
-# Windows example: COM3   |   Linux/Jetson example: /dev/ttyUSB0
+# Windows example: COM3   |   Linux/WSL example: /dev/ttyUSB0
 SERIAL_PORT = _env("SERIAL_PORT", "COM3")
 SERIAL_BAUD = int(_env("SERIAL_BAUD", "115200"))
 # Set SIM=1 to generate fake sensor data (no ESP32 needed) for development.

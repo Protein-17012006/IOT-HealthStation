@@ -1,6 +1,6 @@
 """
 AI module -- fall detection from the iPhone camera stream (the project's
-"AI on the edge" component, running on the Jetson Nano GPU).
+"AI on the edge" component, running on the PC's GPU via WSL).
 
 Two backends, chosen automatically:
   1. MediaPipe Pose  (preferred) -- tracks body landmarks and flags a fall when

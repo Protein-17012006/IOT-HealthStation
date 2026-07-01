@@ -14,8 +14,8 @@
  *    - I2C 16x2 LCD    : on-station information display
  *
  *  COMMUNICATION (Task#2): USB Serial, 115200 baud, newline-delimited JSON.
- *    ESP32 -> Jetson : {"type":"reading","temp":36.8,"hum":55.2,"sound":512}
- *    Jetson -> ESP32 : {"fan":1,"led":"red","lcd":"FEVER 37.8C"}
+ *    ESP32 -> edge   : {"type":"reading","temp":36.8,"hum":55.2,"sound":512}
+ *    edge   -> ESP32 : {"fan":1,"led":"red","lcd":"FEVER 37.8C"}
  *
  *  Required libraries (Arduino IDE -> Library Manager):
  *    DHT sensor library (Adafruit), LiquidCrystal_I2C, ArduinoJson

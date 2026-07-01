@@ -11,8 +11,8 @@ overlay shows up inside the web page instead of a separate desktop window.
 Why a separate process (instead of edge/ai_fall_detection.py)?
   The microcontroller I/O + MariaDB + dashboard run on Windows; the GPU and a
   clean ML stack live in WSL. Splitting on the HTTP boundary lets each side use
-  the environment that suits it -- and mirrors the real Jetson-Nano deployment,
-  where the AI runs on the edge box and talks to the rest over the network.
+  the environment that suits it -- the AI stays isolated from the edge server
+  and talks to it over the network.
 
 Fall heuristic (COCO-17 keypoints from YOLOv8-pose):
   When the pose is trustworthy (shoulders + hips confident) the POSE decides:
