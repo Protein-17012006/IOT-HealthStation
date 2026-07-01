@@ -161,9 +161,19 @@ def test_motiontracker_ignores_slow_sitting():
 
 
 def test_combine_fall_keeps_posture_fall():
-    still = {"dropped": False, "height_ratio": 1.0, "confidence": 0.0}
-    fall, conf = fd.combine_fall(True, 0.9, aspect=0.4, motion=still)
+    """A genuine lying posture (wide box) is kept as a fall."""
+    still = {"dropped": False, "height_ratio": 0.4, "confidence": 0.0}
+    fall, conf = fd.combine_fall(True, 0.9, aspect=1.5, motion=still)
     assert fall is True and conf == 0.9
+
+
+def test_combine_fall_vetoes_leaning():
+    """The reported false positive: a person LEANING/reclining has a tilted torso
+    (posture_fall True) but is still standing-tall (height_ratio high) and the box
+    is not wide -> it must NOT be reported as a fall."""
+    lean = {"dropped": False, "height_ratio": 0.9, "confidence": 0.0}
+    fall, _ = fd.combine_fall(True, 0.9, aspect=0.7, motion=lean)
+    assert fall is False
 
 
 def test_combine_fall_drop_into_collapse_fires_without_wide_box():
