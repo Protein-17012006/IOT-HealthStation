@@ -127,6 +127,10 @@ DROP_ARMED_SECONDS = 2.5    # a detected drop stays relevant this long (> FALL_S
 HEIGHT_DROP_RATIO = 0.65    # box height below this fraction of the recent standing
                             #   height -> collapsed
 LYING_ASPECT = 0.9          # box at least this wide-ish also counts as collapsed
+LEAN_HEIGHT_RATIO = 0.75    # box still >= this fraction of the standing height AND
+                            #   not wide -> the person is upright/leaning, not on
+                            #   the floor. Vetoes a posture-only fall -> kills the
+                            #   "leaning/reclining looks flat" false positive.
 
 # COCO-17 keypoint indices
 L_SH, R_SH, L_HIP, R_HIP = 5, 6, 11, 12
@@ -265,12 +269,24 @@ class MotionTracker:
 
 def combine_fall(posture_fall, confidence, aspect, motion):
     """Merge the single-frame posture verdict (decide_fall) with the temporal
-    verdict (MotionTracker). A fast drop that ends in a low OR wide-ish posture
-    is a fall even when the box never becomes clearly wide -- the exact case
-    single-frame geometry misses. Kept pure so it is unit-testable."""
-    fall_now, conf = posture_fall, confidence
-    collapsed = (motion["height_ratio"] < HEIGHT_DROP_RATIO
-                 or aspect >= LYING_ASPECT)
+    verdict (MotionTracker). Two jobs, both using the standing-height baseline:
+
+      * ADD falls posture alone misses -- a fast downward drop that ends in a low
+        or wide-ish posture (a collapse toward/away from the camera keeps a tall
+        box, so single-frame geometry misses it).
+      * REMOVE the common false positive -- a person LEANING/reclining has a
+        tilted torso that looks 'lying', but is still vertically extended: the box
+        stays near standing height and is not wide. A real fall collapses that
+        height. So veto a posture-only fall while the body is still standing-tall.
+
+    Kept pure so it is unit-testable.
+    """
+    hr = motion["height_ratio"]
+    leaning = hr >= LEAN_HEIGHT_RATIO and aspect < LYING_ASPECT
+    fall_now = posture_fall and not leaning
+    conf = confidence
+
+    collapsed = (hr < HEIGHT_DROP_RATIO) or (aspect >= LYING_ASPECT)
     if motion["dropped"] and collapsed:
         fall_now = True
         conf = max(conf, 0.5 + 0.5 * motion["confidence"])
