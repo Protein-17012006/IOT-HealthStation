@@ -1,14 +1,14 @@
-# Edge server (Jetson Nano) Python dependencies
+# Edge server (laptop/PC, Windows + WSL) Python dependencies
 Flask>=3.0
 PyMySQL>=1.1
 pyserial>=3.5
 numpy>=1.26.4
 
 # Computer vision for fall detection.
-# On the Jetson, OpenCV usually ships preinstalled with JetPack -- if so, skip
-# opencv-python here and use the system build.
+# On some Linux images OpenCV ships preinstalled -- if so, skip opencv-python
+# here and use the system build.
 opencv-python>=4.5
 
-# Preferred pose backend. May need a Jetson-specific wheel on aarch64; if it
-# won't install, the code automatically falls back to the OpenCV HOG detector.
+# Preferred pose backend. May need an aarch64-specific wheel on ARM machines; if
+# it won't install, the code automatically falls back to the OpenCV HOG detector.
 mediapipe>=0.10 ; platform_machine != "aarch64"
